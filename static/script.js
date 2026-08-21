@@ -15,6 +15,7 @@ let subscriber = null;
 let anamClient = null;
 let anamStream = null;
 let wsAnam = null;
+let wsAnamPingId = null;
 let isConnected = false;
 
 function log(msg) {
@@ -183,6 +184,11 @@ async function connect() {
 
     wsAnam.onopen = () => {
       log('Anam WS 接続完了');
+      isConnected = true;
+      setStatus('会話中...');
+      connectBtn.textContent = '切断';
+      connectBtn.className = 'disconnect';
+      connectBtn.disabled = false;
     };
 
     wsAnam.onmessage = (event) => {
@@ -200,27 +206,31 @@ async function connect() {
 
     wsAnam.onclose = () => {
       log('Anam WS 切断');
+      if (!isConnected) {
+        setStatus('接続失敗');
+        connectBtn.disabled = false;
+      }
     };
 
     wsAnam.onerror = (e) => {
       log(`Anam WS エラー: ${e.type}`);
+      if (!isConnected) {
+        setStatus('接続失敗');
+        connectBtn.disabled = false;
+      }
     };
 
-    // Keepalive ping
-    setInterval(() => {
+    // Keepalive ping — store ID to clear on disconnect
+    wsAnamPingId = setInterval(() => {
       if (wsAnam && wsAnam.readyState === WebSocket.OPEN) {
         wsAnam.send('ping');
       }
     }, 15000);
   } catch (e) {
     log(`Anam WS 接続エラー: ${e.message}`);
+    setStatus('接続失敗');
+    connectBtn.disabled = false;
   }
-
-  isConnected = true;
-  setStatus('会話中...');
-  connectBtn.textContent = '切断';
-  connectBtn.className = 'disconnect';
-  connectBtn.disabled = false;
 }
 
 // --- Anam text streaming ---
@@ -274,6 +284,10 @@ function disconnect() {
   try {
     isConnected = false;
 
+    if (wsAnamPingId) {
+      clearInterval(wsAnamPingId);
+      wsAnamPingId = null;
+    }
     if (wsAnam) {
       try { wsAnam.close(); } catch (e) {}
       wsAnam = null;

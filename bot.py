@@ -1,9 +1,14 @@
 import asyncio
 import os
+from typing import Optional, Protocol
 
-from dotenv import load_dotenv
-from fastapi import WebSocket
 from loguru import logger
+
+
+class HasSendJson(Protocol):
+    """Protocol for WebSocket-like object with send_json. Decouples from fastapi."""
+
+    async def send_json(self, data: dict) -> None: ...
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
@@ -29,7 +34,8 @@ from pipecat.transports.websocket.fastapi import (
 )
 from pipecat.workers.runner import WorkerRunner
 
-load_dotenv(override=True)
+# Env loaded once at server.py entry (single source); bot relies on server import order
+# TODO(prod): ensure load_dotenv only via server.py with override=False
 
 # Monkey-patch LLMAssistantAggregator to forward frames downstream to TTS.
 _original_handle_text = LLMAssistantAggregator._handle_text
@@ -56,13 +62,14 @@ class LLMTextBridgeProcessor:
 
     The browser uses this text to drive the Anam.ai JS SDK (TTS + avatar).
     """
-    def __init__(self):
-        self._clients: set[WebSocket] = set()
 
-    def add_client(self, ws: WebSocket):
+    def __init__(self):
+        self._clients: set[HasSendJson] = set()
+
+    def add_client(self, ws: HasSendJson):
         self._clients.add(ws)
 
-    def remove_client(self, ws: WebSocket):
+    def remove_client(self, ws: HasSendJson):
         self._clients.discard(ws)
 
     async def broadcast_text(self, text: str):
@@ -138,7 +145,12 @@ async def run_bot(
     )
 
     context = LLMContext()
-    context._messages.clear()
+    # Use public API; _messages is private and may break on pipecat bump
+    # Fallback to private clear if set_messages not available (for pipecat <1.4)
+    if hasattr(context, "set_messages"):
+        context.set_messages([])
+    else:
+        context._messages.clear()  # noqa: SLF001
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
         context,
         user_params=LLMUserAggregatorParams(

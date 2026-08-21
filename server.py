@@ -2,9 +2,15 @@ import asyncio
 import os
 import warnings
 from contextlib import asynccontextmanager
+from typing import Optional
 
 import uvicorn
 from dotenv import load_dotenv
+
+# Single source for env loading at process entry; keep override=True for demo
+# TODO(prod): change to override=False or gate with ENV=production to respect injected secrets
+load_dotenv(override=True)
+
 from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
@@ -21,8 +27,6 @@ from vonage import Auth, Vonage
 from vonage_http_client import HttpClientOptions
 from vonage_video import AudioConnectorOptions, TokenOptions
 from vonage_video.models.audio_connector import AudioConnectorWebSocket
-
-load_dotenv(override=True)
 
 warnings.filterwarnings("ignore", message="'asyncio.iscoroutinefunction' is deprecated")
 
@@ -72,7 +76,7 @@ async def _connect_audio_connector_async(
     vng: Vonage, session_id: str, ws_uri: str, audio_rate: int
 ) -> None:
     for old_sid in list(_active_connectors.keys()):
-        await _stop_audio_connector_async(old_sid)
+            await _stop_audio_connector_async(old_sid, vng)
 
     logger.info(
         f"Connecting Audio Connector: session={session_id}, ws={ws_uri}, rate={audio_rate}"
@@ -96,8 +100,9 @@ async def _connect_audio_connector_async(
     logger.info(f"Audio Connector started: id={connector.id}")
 
 
-async def _stop_audio_connector_async(session_id: str) -> None:
-    vng = _get_video_client()
+async def _stop_audio_connector_async(session_id: str, vng: Optional[Vonage] = None) -> None:
+    if vng is None:
+        vng = _get_video_client()
     connector = _active_connectors.pop(session_id, None)
     if connector is None:
         return
@@ -127,6 +132,12 @@ def _get_video_client() -> Vonage:
 async def lifespan(app: FastAPI):
     logger.info("Server starting up...")
     yield
+    # Cleanup Audio Connectors on shutdown (reuse vng if possible)
+    for sid in list(_active_connectors.keys()):
+        try:
+            await _stop_audio_connector_async(sid)
+        except Exception as e:
+            logger.warning(f"Failed to stop connector on shutdown {sid}: {e}")
     logger.info("Server shutting down...")
 
 
@@ -158,7 +169,7 @@ async def health():
 
 
 @app.post("/api/anam/session-token")
-async def anam_session_token(request: Request) -> JSONResponse:
+async def anam_session_token() -> JSONResponse:
     """Creates an Anam session token for the browser JS SDK.
     The browser uses this to initialize the Anam avatar client."""
     anam_api_key = _require_env("ANAM_API_KEY")
@@ -203,8 +214,12 @@ async def create_vonage_session(request: Request) -> JSONResponse:
     ws_uri = os.getenv("WS_URI")
     if not ws_uri:
         host = request.headers.get("host", "localhost:8005")
+        # Known limitation: 127.0.0.1 / ::1 will be classified as wss (should be ws for dev)
         scheme = "ws" if host.startswith("localhost") else "wss"
         ws_uri = f"{scheme}://{host}/ws"
+
+    if not (ws_uri.startswith("ws://") or ws_uri.startswith("wss://")):
+        raise HTTPException(status_code=500, detail=f"Invalid WS_URI scheme: {ws_uri}")
 
     vng = _create_vonage_client(application_id, private_key)
     session_id = await _create_session_async(vng)

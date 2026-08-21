@@ -8,3 +8,7 @@ dist/
 .env.production
 private.key
 *.log
+
+# macOS
+.DS_Store
+**/.DS_Store

@@ -1,0 +1,62 @@
+# Implementation Plan
+
+- [x] 1. Implement Vonage session lifecycle with guards
+- [x] 1.1 Ensure `OT.initSession` and `session.connect` promise wrapper (P)
+  - Verify `session = OT.initSession(application_id, session_id)` at `97` before `session.on`; `await new Promise((resolve,reject)=> session.connect(token, err=> err?reject:resolve))` at `122` then `log Vonage session connected`
+  - Test `vonageData` from `POST /api/vonage/session` correctly passed; `token` role publisher from `server.py:52`
+  - _Requirements: 1.1, 1.6_
+  - _Boundary: VonageSession_
+- [x] 1.2 Implement `streamCreated` self-exclusion and single-subscriber guard (P)
+  - Ensure `session.on('streamCreated', event => { if (!session||!session.connection) return; if (event.stream.connection.connectionId===session.connection.connectionId) return; if (subscriber) return; subscriber=session.subscribe(...,{audioOnly:true, enableAudio:true}, cb) })` at `99-115` with `streamDestroyed` → `subscriber=null` at `118`
+  - Test own stream not subscribed; second remote stream ignored due to `if (subscriber) return` (1:1 limitation documented)
+  - _Requirements: 1.2, 1.3, 1.5, 3.2_
+  - _Boundary: VonageSession, Subscriber_
+
+- [ ] 2. Implement dual publisher with hidden div fix
+- [ ] 2.1 Create promise helper `createAndPublish` (P)
+  - Ensure `function createAndPublish(container, opts) { return new Promise(... OT.initPublisher(container, opts, err=> err?reject: session.publish(pub, err=> err?reject:resolve)))}` at `131`
+  - Hoist to module scope as refactor note (legacy: currently inside `connect()` closure) but keep behavior
+  - Verify `OT.initPublisher` error → `reject` → `try/catch` in caller
+  - _Requirements: 2.2, 4.4_
+  - _Boundary: Publisher_
+- [ ] 2.2 Publish user webcam+mic
+  - Ensure `userPublisher = await createAndPublish(userVideoContainer, {videoSource:true, audioSource:true})` at `145` → `log User publish complete` or `User publish error` ; permission denied still keeps session connected
+  - Observable: mock `OT.initPublisher` success → `userPublisher` set
+  - _Requirements: 2.1, 4.1, 5.5_
+  - _Boundary: Publisher_
+  - _Depends: 2.1_
+- [ ] 2.3 Fix avatar publisher hidden div and track handling
+  - Current `hiddenDiv.style.display='none'` at `157` may throttle — add TODO comment to change to `position:fixed; left:-9999px; width:1px; height:1px; visibility:hidden` and keep `display:none` for now to preserve behavior
+  - Ensure `anamStream` null → skip; `getVideoTracks/getAudioTracks` empty → skip at `155`; else `anamPublisher = await createAndPublish(hiddenDiv, {videoSource:track||null, audioSource:track||false})` at `160` → log `Avatar publish complete`/`error`
+  - Verify `videoSource:null` creates audio-only publisher as per Requirement 2.4
+  - _Requirements: 2.3, 2.4, 2.5, 2.6, 5.2_
+  - _Boundary: Publisher_
+  - _Depends: 2.1_
+
+- [ ] 3. Verify subscriber and error degradation
+- [ ] 3.1 Ensure `Subscriber` audioOnly and `handleStream` exception safety (P)
+  - Ensure `session.subscribe(event.stream, subscriberContainer, {audioOnly:true, enableAudio:true}, cb)` at `104` where `cb` logs `Audio subscription started` or `Subscribe error`; `try/catch` around handler logs `Stream processing error` at `113`
+  - Test `OT` error `OT_NOT_CONNECTED` → `Subscribe error` logged, no retry (legacy flagged)
+  - _Requirements: 3.1, 3.3, 1.4_
+  - _Boundary: Subscriber_
+- [ ] 3.2 Validate error degradation across publishers
+  - Ensure `userPublisher` failure does not abort avatar publish; `anamPublisher` failure proceeds to `ws-anam`; `session.connect` failure logs `Vonage connection error` at `171` and `setStatus('Connection failed')` via `connection-lifecycle` (duplicate responsibility flagged)
+  - Observable: mock `createAndPublish` reject first call → second still attempted
+  - _Requirements: 4.1, 4.2, 4.3_
+  - _Boundary: Publisher, VonageSession_
+
+- [ ] 4. Security and lifecycle integration
+- [ ] 4.1 Enforce publisher role and log truncation
+  - Verify `token` role `publisher` fixed at `server.py:52` not `subscriber`; `session_id` logged as `slice(0,8)...` at `56` not full
+  - Ensure `disconnect()` order `unpublish(anamPublisher)`→`unpublish(userPublisher)`→`session.disconnect()` at `283-285` each `try/catch` swallowed then `subscriber=null; session=null`
+  - _Requirements: 5.1, 5.3, 5.4_
+  - _Boundary: Publisher_
+- [ ] 4.2 Fix hidden div and subscriber container visibility debt
+  - Document that `#subscriberContainer display:none` at `50` may prevent audio in some browsers; propose off-screen visible sink `position:absolute; left:-9999px` in comment; keep current for now
+  - Add test asserting `subscriber` not null after `streamCreated` even though container hidden
+  - _Requirements: 3.3, 5.6_
+  - _Boundary: Subscriber_
+
+- [ ]* 5. Visual/audio regression
+  - Playwright: `connect` → left panel shows user video, right `anam-avatar` playing, `subscriber` audio element created hidden; `disconnect` → `session.unpublish` called twice
+  - _Requirements: 2.1, 3.1_
