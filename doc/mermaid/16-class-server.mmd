@@ -1,0 +1,59 @@
+%%{init: {'theme': 'dark'}}%%
+classDiagram
+    class FastAPIApp {
+        <<FastAPI>>
+        +GET / : index.html返却
+        +GET /health : 稼働確認
+        +POST /api-anam-session-token : Anamトークン発行
+        +POST /api-vonage-session : セッション作成
+        +WS /ws : Audio Connector受付
+        +WS /ws-anam : LLMテキスト配信
+        +lifespan() : Connector後始末
+    }
+
+    class VonageHelpers {
+        <<server.py 関数群>>
+        +require_env(name) str
+        +read_private_key(value) str
+        +create_vonage_client(app_id, key) Vonage
+        +generate_client_token(vng, sid) str
+        +create_session_async(vng) sid
+        +connect_audio_connector_async(vng, sid, uri, rate)
+        +stop_audio_connector_async(sid, vng)
+        +get_video_client() Vonage
+    }
+
+    class ActiveConnectors {
+        <<モジュール変数>>
+        +dict session_id to connector
+    }
+
+    class VonageSDK {
+        <<外部 vonage/vonage-video>>
+        +Auth
+        +Vonage
+        +AudioConnectorOptions
+        +TokenOptions
+    }
+
+    class AnamTokenAPI {
+        <<外部 api.anam.ai>>
+        +POST /v1/auth/session-token
+    }
+
+    class TextBridge {
+        <<bot.py>>
+        +add_client(ws)
+        +remove_client(ws)
+        +broadcast_text(text) async
+    }
+
+    FastAPIApp --> VonageHelpers : 呼出
+    FastAPIApp --> ActiveConnectors : 登録/削除 _active_connectors
+    VonageHelpers --> VonageSDK : 利用
+    VonageHelpers --> ActiveConnectors : 更新
+    FastAPIApp --> AnamTokenAPI : aiohttp POST セッショントークン取得
+    FastAPIApp --> TextBridge : get_text_bridge /ws-anam 配信
+
+    note for FastAPIApp "create_vonage_session: 旧Connector停止→新規作成→token返却"
+    note for VonageHelpers "同期SDK呼出は run_in_executorで非同期化"

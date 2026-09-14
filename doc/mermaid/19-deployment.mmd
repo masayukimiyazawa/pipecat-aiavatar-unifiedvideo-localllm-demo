@@ -1,0 +1,26 @@
+%%{init: {'theme': 'dark'}}%%
+flowchart LR
+    subgraph LOCAL["ローカルマシン Apple Silicon Mac"]
+        direction TB
+        BR["ブラウザ index.html + script.js<br/>OT Publisher/Subscriber + Anam JS SDK"]
+        UV["FastAPI/Uvicorn server.py<br/>port 8005"]
+        PP["Pipecat Pipeline bot.py<br/>Whisper STT + LLM転送"]
+        LM["LM Studio localhost:1234<br/>OpenAI互換API"]
+        CF["cloudflared<br/>Tunnelクライアント"]
+        BR <-- 画面表示/WS --> UV
+        UV <-- パイプライン呼出 --> PP
+        PP <-- 推論API --> LM
+        UV <-- 転送 --> CF
+    end
+    subgraph CLOUD["クラウドサービス"]
+        direction TB
+        CE["Cloudflare Edge<br/>trycloudflare.com<br/>HTTPS/WSS公開"]
+        VA["Vonage Video API<br/>video.api.vonage.com<br/>セッション/Connector管理"]
+        AN["Anam.ai Cloud<br/>api.anam.ai<br/>TTS+アバター描画"]
+    end
+    CF <-- トンネル --> CE
+    CE <-- 公開URL --> BR
+    UV <-- セッション/Connector --> VA
+    PP <-- 音声フレーム /ws --> VA
+    BR <-- 映像/音声配信 --> VA
+    BR <-- TTS/描画 --> AN

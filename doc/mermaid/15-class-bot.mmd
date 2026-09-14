@@ -1,0 +1,66 @@
+%%{init: {'theme': 'dark'}}%%
+classDiagram
+    class HasSendJson {
+        <<Protocol>>
+        +send_json(data) None
+    }
+
+    class LLMTextBridgeProcessor {
+        -_clients : set
+        +add_client(ws)
+        +remove_client(ws)
+        +broadcast_text(text) async
+        +broadcast_end() async
+    }
+
+    class LLMTextForwarder {
+        -_bridge : LLMTextBridgeProcessor
+        +process_frame(frame, direction) async
+    }
+
+    class FrameProcessor {
+        <<Pipecat外部>>
+        +process_frame(frame, direction) async
+        +push_frame(frame, direction) async
+    }
+
+    class Pipeline {
+        <<Pipecat外部>>
+    }
+    class PipelineWorker {
+        <<Pipecat外部>>
+    }
+    class WorkerRunner {
+        <<Pipecat外部>>
+    }
+    class OpenAILLMService {
+        <<Pipecat外部>>
+        +model : LM_MODEL
+        +base_url : LM_STUDIO_BASE_URL
+    }
+    class WhisperSTTServiceMLX {
+        <<Pipecat外部>>
+        +model : LARGE_V3_TURBO_Q4
+        +language : ja
+    }
+    class SileroVADAnalyzer {
+        <<Pipecat外部>>
+        +confidence : 0.7
+    }
+    class LLMContextAggregatorPair {
+        <<Pipecat外部>>
+    }
+
+    LLMTextBridgeProcessor ..> HasSendJson : uses send_json
+    LLMTextForwarder --|> FrameProcessor : 継承
+    LLMTextForwarder --> LLMTextBridgeProcessor : has-a broadcast_text/broadcast_end
+    Pipeline --> LLMTextForwarder : 含む text_forwarder
+    Pipeline --> WhisperSTTServiceMLX : 含む stt
+    Pipeline --> OpenAILLMService : 含む llm
+    Pipeline --> LLMContextAggregatorPair : 含む user/assistant
+    PipelineWorker --> Pipeline : 実行
+    WorkerRunner --> PipelineWorker : 実行
+    OpenAILLMService ..> LLMContextAggregatorPair : TextFrame入出力
+
+    note for LLMTextBridgeProcessor "シングルトン _text_bridge /ws-anam 接続ブラウザへ配信"
+    note for LLMTextForwarder "TextFrame→bridge.broadcast_text LLMFullResponseEndFrame→broadcast_end"

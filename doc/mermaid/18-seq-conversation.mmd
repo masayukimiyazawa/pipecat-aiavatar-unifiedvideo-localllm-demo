@@ -1,0 +1,28 @@
+%%{init: {'theme': 'dark'}}%%
+sequenceDiagram
+    autonumber
+    participant U as ユーザ マイク
+    participant V as Vonage<br/>Audio Connector
+    participant P as Pipecat Pipeline<br/>bot.py
+    participant L as LM Studio<br/>ローカルLLM
+    participant T as LLMTextBridge<br/>/ws-anam
+    participant N as Anam SDK<br/>ブラウザ
+
+    U->>V: 発話(音声)
+    V->>P: 音声フレーム /ws<br/>VonageFrameSerializer
+    P->>P: Silero VAD 話者検出<br/>confidence 0.7
+    P->>P: Whisper STT 音声→テキスト<br/>LARGE_V3_TURBO_Q4 ja
+    P->>L: LLM推論(OpenAI互換API)<br/>日本語2-3文指示
+    L-->>P: 応答テキスト
+    P->>P: LLMAssistantAggregator<br/>TextFrame化(+monkey-patch転送)
+    loop ストリーミングチャンク毎
+        P->>T: LLMTextForwarder<br/>broadcast_text
+        T->>N: WS llm_text
+        N->>N: createTalkMessageStream<br/>streamMessageChunk
+        N->>N: TTS+リップシンク生成
+    end
+    P->>T: LLMFullResponseEndFrame<br/>broadcast_end
+    T->>N: WS llm_end
+    N->>N: endMessage ストリーム終了
+    N->>V: アバター映像+音声をpublish
+    V-->>U: アバター表示+音声再生

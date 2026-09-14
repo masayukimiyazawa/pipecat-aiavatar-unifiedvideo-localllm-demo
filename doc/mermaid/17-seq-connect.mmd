@@ -1,0 +1,31 @@
+%%{init: {'theme': 'dark'}}%%
+sequenceDiagram
+    autonumber
+    participant B as ブラウザ script.js
+    participant S as FastAPI server.py
+    participant A as Anam API
+    participant V as Vonage API
+    participant W as /ws Pipecat bot.py
+
+    B->>S: POST /api/anam/session-token
+    S->>A: POST /v1/auth/session-token<br/>(avatarId, voiceId)
+    A-->>S: sessionToken
+    S-->>B: {sessionToken}
+    B->>S: POST /api/vonage/session
+    S->>V: create_session()
+    V-->>S: session_id
+    S->>S: 旧Connector停止(stop_audio_connector)
+    S->>V: start_audio_connector(ws_uri, 16kHz, 双方向)
+    V-->>S: connector
+    S->>V: generate_client_token(publisher)
+    V-->>S: token
+    S-->>B: {session_id, token, application_id}
+    B->>B: Anam初期化 createClient+stream
+    B->>V: OT.initSession + connect(token)
+    B->>V: publish(ユーザ映像+音声)
+    B->>V: publish(Anam映像+音声)
+    V->>W: /ws 接続(Audio Connector)
+    W-->>V: keepalive 10秒毎
+    B->>S: WS /ws-anam 接続
+    S-->>B: 初期挨拶 llm_text + llm_end
+    B->>B: 状態=会話中
